@@ -57,7 +57,7 @@ resource "aws_ecr_repository" "zmg_ecr" {
   }
 }
 
-#Create Iam Role for Build Project
+#Create Iam Role for Build Project 001
 resource "aws_iam_role" "codebuildiamrole" {
   name = "CodeBuildIamRole001"
 
@@ -75,6 +75,44 @@ resource "aws_iam_role" "codebuildiamrole" {
   ]
 }
 EOF
+}
+
+#Create Iam Policy for ECR Role
+resource "aws_iam_role_policy" "zmg_ecr_role_policy" {
+  role = "CodeBuildIamRole001"
+  name = "CodeBuildInlinePolicy"
+  policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Resource": [
+        "*"
+      ],
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+POLICY
 }
 
 #Create Code Build
