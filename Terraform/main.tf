@@ -7,6 +7,10 @@ provider "aws" {
 #Get Account info
 data "aws_caller_identity" "current" {}
 
+output "user_identity_id" {
+  value = data.aws_caller_identity.current.id
+}
+
 #Create KMS Key
 resource "aws_kms_key" "zmgkmskey" {}
 
@@ -103,7 +107,7 @@ resource "aws_codebuild_project" "zmgbuildproject" {
     }
     environment_variable {
       name  = "AWS_ACCOUNT_ID"
-      value = data.aws_caller_identity.current.account_id
+      value = data.aws_caller_identity.current.id
     }
     environment_variable {
       name  = "IMAGE_REPO_NAME"
