@@ -1,0 +1,2 @@
+variable "AWSACCESSKEYID" {}
+variable "AWSSECRETID" {}
