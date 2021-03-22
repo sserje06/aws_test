@@ -11,14 +11,6 @@ output "user_identity_id" {
   value = data.aws_caller_identity.current.id
 }
 
-#Create KMS Key
-resource "aws_kms_key" "zmgkmskey" {}
-
-resource "aws_kms_alias" "zmgkmskey" {
-  name          = "alias/zmg-kmskey"
-  target_key_id = aws_kms_key.zmgkmskey.key_id
-}
-
 #Create Github Connection
 resource "aws_codestarconnections_connection" "zmg_github" {
   name          = "zmg-connection"
@@ -57,6 +49,53 @@ resource "aws_ecr_repository" "zmg_ecr" {
   }
 }
 
+#Create ECS with dependencies
+resource "aws_ecs_task_definition" "zmg_ecs_tasks" {
+  family = "service"
+  container_definitions = jsonencode([
+    {
+      name      = "first"
+      image     = "913071338106.dkr.ecr.us-east-2.amazonaws.com/zmg-ecr"
+      cpu       = 2
+      memory    = 512
+      essential = true
+      portMappings = [
+        {
+          containerPort = 80
+          hostPort      = 80
+        }
+      ]
+    }
+  ])
+
+  volume {
+    name      = "service-storage"
+    host_path = "/ecs/service-storage"
+  }
+
+  placement_constraints {
+    type       = "memberOf"
+    expression = "attribute:ecs.availability-zone in [us-east-1a, us-east-1b]"
+  }
+}
+
+resource "aws_ecs_cluster" "zmg_ecs_cluser" {
+  name = "zmg_ecs_cluser"
+  capacity_providers = [ "FARGATE" ]
+}
+
+resource "aws_ecs_service" "zmg_ecs_service" {
+  name            = "zmg_ecs"
+  cluster         = aws_ecs_cluster.zmg_ecs_cluser.id
+  task_definition = aws_ecs_task_definition.zmg_ecs_tasks.arn
+  desired_count   = 1
+
+  ordered_placement_strategy {
+    type  = "binpack"
+    field = "cpu"
+  }
+}
+
 #Create Iam Role for Build Project 001
 resource "aws_iam_role" "codebuildiamrole" {
   name = "CodeBuildIamRole001"
@@ -77,7 +116,7 @@ resource "aws_iam_role" "codebuildiamrole" {
 EOF
 }
 
-#Create Iam Policy for ECR Role
+#Create Iam Policy for Build
 resource "aws_iam_role_policy" "zmg_ecr_role_policy" {
   role = "CodeBuildIamRole001"
   name = "CodeBuildInlinePolicy"
@@ -100,6 +139,14 @@ resource "aws_iam_role_policy" "zmg_ecr_role_policy" {
       "Effect": "Allow",
       "Action": [
         "s3:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "codestar-connections:UseConnection",
+        "codestar-connections:GetConnection"
       ],
       "Resource": "*"
     },
@@ -176,6 +223,211 @@ resource "aws_codedeploy_app" "zmgcodedeploy" {
   name             = "zmg-code-deploy"
 }
 
+#Create Code Pipeline Policies
+resource "aws_iam_role" "codepipeline_role" {
+  name = "code-pipeline-role"
+
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "codepipeline.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+}
+
+resource "aws_iam_role_policy" "codepipeline_policy" {
+  name = "codepipeline_policy"
+  role = aws_iam_role.codepipeline_role.id
+
+  policy = <<EOF
+{
+  "Statement": [
+      {
+          "Action": [
+              "iam:PassRole"
+          ],
+          "Resource": "*",
+          "Effect": "Allow",
+          "Condition": {
+              "StringEqualsIfExists": {
+                  "iam:PassedToService": [
+                      "cloudformation.amazonaws.com",
+                      "elasticbeanstalk.amazonaws.com",
+                      "ec2.amazonaws.com",
+                      "ecs-tasks.amazonaws.com"
+                  ]
+              }
+          }
+      },
+      {
+          "Action": [
+              "codecommit:CancelUploadArchive",
+              "codecommit:GetBranch",
+              "codecommit:GetCommit",
+              "codecommit:GetRepository",
+              "codecommit:GetUploadArchiveStatus",
+              "codecommit:UploadArchive"
+          ],
+          "Resource": "*",
+          "Effect": "Allow"
+      },
+      {
+          "Action": [
+              "codedeploy:CreateDeployment",
+              "codedeploy:GetApplication",
+              "codedeploy:GetApplicationRevision",
+              "codedeploy:GetDeployment",
+              "codedeploy:GetDeploymentConfig",
+              "codedeploy:RegisterApplicationRevision"
+          ],
+          "Resource": "*",
+          "Effect": "Allow"
+      },
+      {
+          "Action": [
+              "codestar-connections:UseConnection"
+          ],
+          "Resource": "*",
+          "Effect": "Allow"
+      },
+      {
+          "Action": [
+              "elasticbeanstalk:*",
+              "ec2:*",
+              "elasticloadbalancing:*",
+              "autoscaling:*",
+              "cloudwatch:*",
+              "s3:*",
+              "sns:*",
+              "cloudformation:*",
+              "rds:*",
+              "sqs:*",
+              "ecs:*"
+          ],
+          "Resource": "*",
+          "Effect": "Allow"
+      },
+      {
+          "Action": [
+              "lambda:InvokeFunction",
+              "lambda:ListFunctions"
+          ],
+          "Resource": "*",
+          "Effect": "Allow"
+      },
+      {
+          "Action": [
+              "opsworks:CreateDeployment",
+              "opsworks:DescribeApps",
+              "opsworks:DescribeCommands",
+              "opsworks:DescribeDeployments",
+              "opsworks:DescribeInstances",
+              "opsworks:DescribeStacks",
+              "opsworks:UpdateApp",
+              "opsworks:UpdateStack"
+          ],
+          "Resource": "*",
+          "Effect": "Allow"
+      },
+      {
+          "Action": [
+              "cloudformation:CreateStack",
+              "cloudformation:DeleteStack",
+              "cloudformation:DescribeStacks",
+              "cloudformation:UpdateStack",
+              "cloudformation:CreateChangeSet",
+              "cloudformation:DeleteChangeSet",
+              "cloudformation:DescribeChangeSet",
+              "cloudformation:ExecuteChangeSet",
+              "cloudformation:SetStackPolicy",
+              "cloudformation:ValidateTemplate"
+          ],
+          "Resource": "*",
+          "Effect": "Allow"
+      },
+      {
+          "Action": [
+              "codebuild:BatchGetBuilds",
+              "codebuild:StartBuild",
+              "codebuild:BatchGetBuildBatches",
+              "codebuild:StartBuildBatch"
+          ],
+          "Resource": "*",
+          "Effect": "Allow"
+      },
+      {
+          "Effect": "Allow",
+          "Action": [
+              "devicefarm:ListProjects",
+              "devicefarm:ListDevicePools",
+              "devicefarm:GetRun",
+              "devicefarm:GetUpload",
+              "devicefarm:CreateUpload",
+              "devicefarm:ScheduleRun"
+          ],
+          "Resource": "*"
+      },
+      {
+          "Effect": "Allow",
+          "Action": [
+              "servicecatalog:ListProvisioningArtifacts",
+              "servicecatalog:CreateProvisioningArtifact",
+              "servicecatalog:DescribeProvisioningArtifact",
+              "servicecatalog:DeleteProvisioningArtifact",
+              "servicecatalog:UpdateProduct"
+          ],
+          "Resource": "*"
+      },
+      {
+          "Effect": "Allow",
+          "Action": [
+              "cloudformation:ValidateTemplate"
+          ],
+          "Resource": "*"
+      },
+      {
+          "Effect": "Allow",
+          "Action": [
+              "ecr:DescribeImages"
+          ],
+          "Resource": "*"
+      },
+      {
+          "Effect": "Allow",
+          "Action": [
+              "states:DescribeExecution",
+              "states:DescribeStateMachine",
+              "states:StartExecution"
+          ],
+          "Resource": "*"
+      },
+      {
+          "Effect": "Allow",
+          "Action": [
+              "appconfig:StartDeployment",
+              "appconfig:StopDeployment",
+              "appconfig:GetDeployment"
+          ],
+          "Resource": "*"
+      }
+  ],
+  "Version": "2012-10-17"
+}
+EOF
+
+depends_on = [
+  aws_iam_role.codepipeline_role
+]
+}
+
 #Create a Code Pipeline
 resource "aws_codepipeline" "codepipeline" {
   name     = "zmg-pipeline"
@@ -184,11 +436,6 @@ resource "aws_codepipeline" "codepipeline" {
   artifact_store {
     location = aws_s3_bucket.zmgartifactsstore.bucket
     type     = "S3"
-
-    encryption_key {
-      id   = data.aws_kms_alias.s3kmskey.arn
-      type = "KMS"
-    }
   }
 
   stage {
@@ -206,6 +453,7 @@ resource "aws_codepipeline" "codepipeline" {
         ConnectionArn    = aws_codestarconnections_connection.zmg_github.arn
         FullRepositoryId = "sserje06/aws_test"
         BranchName       = "main"
+        OutputArtifactFormat: "CODEBUILD_CLONE_REF"
       }
     }
   }
@@ -235,79 +483,14 @@ resource "aws_codepipeline" "codepipeline" {
       name            = "Deploy"
       category        = "Deploy"
       owner           = "AWS"
-      provider        = "CloudFormation"
+      provider        = "ECS"
       input_artifacts = ["build_output"]
       version         = "1"
 
       configuration = {
-        ActionMode     = "REPLACE_ON_FAILURE"
-        Capabilities   = "CAPABILITY_AUTO_EXPAND,CAPABILITY_IAM"
-        OutputFileName = "CreateStackOutput.json"
-        StackName      = "zmg-code-deploy"
-        TemplatePath   = "build_output::sam-templated.yaml"
+        ClusterName = "zmg_ecs_cluser"
+        ServiceName = "zmg_ecs"
       }
     }
   }
-}
-
-resource "aws_iam_role" "codepipeline_role" {
-  name = "code-pipeline-role"
-
-  assume_role_policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Service": "codepipeline.amazonaws.com"
-      },
-      "Action": "sts:AssumeRole"
-    }
-  ]
-}
-EOF
-}
-
-resource "aws_iam_role_policy" "codepipeline_policy" {
-  name = "codepipeline_policy"
-  role = aws_iam_role.codepipeline_role.id
-
-  policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect":"Allow",
-      "Action": [
-        "s3:GetObject",
-        "s3:GetObjectVersion",
-        "s3:GetBucketVersioning",
-        "s3:PutObject"
-      ],
-      "Resource": [
-        "${aws_s3_bucket.zmgartifactsstore.arn}",
-        "${aws_s3_bucket.zmgartifactsstore.arn}/*"
-      ]
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "codebuild:BatchGetBuilds",
-        "codebuild:StartBuild"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
-EOF
-}
-
-data "aws_kms_alias" "s3kmskey" {
-  name = "alias/zmg-kmskey"
-
-  depends_on = [
-    aws_kms_key.zmgkmskey,
-    aws_kms_alias.zmgkmskey
-  ]
 }
