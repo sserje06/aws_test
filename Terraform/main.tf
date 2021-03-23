@@ -49,9 +49,217 @@ resource "aws_ecr_repository" "zmg_ecr" {
   }
 }
 
+#Create Network for ECS
+resource "aws_vpc" "ecs_vpc_main" {
+  cidr_block = "10.10.0.0/16"
+  enable_dns_support = true
+  enable_dns_hostnames = true
+}
+
+resource "aws_subnet" "ecs_subnet_main" {
+  vpc_id     = aws_vpc.ecs_vpc_main.id
+  cidr_block = "10.10.1.0/24"
+  map_public_ip_on_launch = true
+  
+}
+
+resource "aws_security_group" "ecs_allow_tls" {
+  name        = "allow_tls"
+  description = "Allow TLS inbound traffic"
+  vpc_id      = aws_vpc.ecs_vpc_main.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_network_interface" "ecs_nsg" {
+  subnet_id       = aws_subnet.ecs_subnet_main.id
+  private_ips     = ["10.10.1.20"]
+  security_groups = [aws_security_group.ecs_allow_tls.id]
+}
+
+#Create Role ECS
+resource "aws_iam_role" "zmg_ecs_role" {
+  name = "ecs-role"
+
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": [
+            "s3.amazonaws.com",
+            "lambda.amazonaws.com",
+            "ecs-tasks.amazonaws.com"
+            ]
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+}
+
+#Create Policy ECS
+resource "aws_iam_role_policy" "zmg_ecs_policy" {
+  role = "ecs-role"
+  name = "CodeBuildInlinePolicy"
+  policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+      {
+          "Sid": "ECSTaskManagement",
+          "Effect": "Allow",
+          "Action": [
+              "ec2:AttachNetworkInterface",
+              "ec2:CreateNetworkInterface",
+              "ec2:CreateNetworkInterfacePermission",
+              "ec2:DeleteNetworkInterface",
+              "ec2:DeleteNetworkInterfacePermission",
+              "ec2:Describe*",
+              "ec2:DetachNetworkInterface",
+              "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+              "elasticloadbalancing:DeregisterTargets",
+              "elasticloadbalancing:Describe*",
+              "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+              "elasticloadbalancing:RegisterTargets",
+              "route53:ChangeResourceRecordSets",
+              "route53:CreateHealthCheck",
+              "route53:DeleteHealthCheck",
+              "route53:Get*",
+              "route53:List*",
+              "route53:UpdateHealthCheck",
+              "servicediscovery:DeregisterInstance",
+              "servicediscovery:Get*",
+              "servicediscovery:List*",
+              "servicediscovery:RegisterInstance",
+              "servicediscovery:UpdateInstanceCustomHealthStatus"
+          ],
+          "Resource": "*"
+      },
+      {
+          "Sid": "AutoScaling",
+          "Effect": "Allow",
+          "Action": [
+              "autoscaling:Describe*"
+          ],
+          "Resource": "*"
+      },
+      {
+          "Sid": "AutoScalingManagement",
+          "Effect": "Allow",
+          "Action": [
+              "autoscaling:DeletePolicy",
+              "autoscaling:PutScalingPolicy",
+              "autoscaling:SetInstanceProtection",
+              "autoscaling:UpdateAutoScalingGroup"
+          ],
+          "Resource": "*",
+          "Condition": {
+              "Null": {
+                  "autoscaling:ResourceTag/AmazonECSManaged": "false"
+              }
+          }
+      },
+      {
+          "Sid": "AutoScalingPlanManagement",
+          "Effect": "Allow",
+          "Action": [
+              "autoscaling-plans:CreateScalingPlan",
+              "autoscaling-plans:DeleteScalingPlan",
+              "autoscaling-plans:DescribeScalingPlans"
+          ],
+          "Resource": "*"
+      },
+      {
+          "Sid": "CWAlarmManagement",
+          "Effect": "Allow",
+          "Action": [
+              "cloudwatch:DeleteAlarms",
+              "cloudwatch:DescribeAlarms",
+              "cloudwatch:PutMetricAlarm"
+          ],
+          "Resource": "*"
+      },
+      {
+          "Sid": "ECSTagging",
+          "Effect": "Allow",
+          "Action": [
+              "ec2:CreateTags"
+          ],
+          "Resource": "*"
+      },
+      {
+          "Sid": "CWLogGroupManagement",
+          "Effect": "Allow",
+          "Action": [
+              "logs:CreateLogGroup",
+              "logs:DescribeLogGroups",
+              "logs:PutRetentionPolicy"
+          ],
+          "Resource": "*"
+      },
+      {
+          "Sid": "CWLogStreamManagement",
+          "Effect": "Allow",
+          "Action": [
+              "logs:CreateLogStream",
+              "logs:DescribeLogStreams",
+              "logs:PutLogEvents"
+          ],
+          "Resource": "*"
+      },
+      {
+          "Sid": "ExecuteCommandSessionManagement",
+          "Effect": "Allow",
+          "Action": [
+              "ssm:DescribeSessions"
+          ],
+          "Resource": "*"
+      },
+      {
+          "Sid": "ExecuteCommand",
+          "Effect": "Allow",
+          "Action": [
+              "ssm:StartSession"
+          ],
+          "Resource": "*"
+      }
+  ]
+}
+EOF
+depends_on = [
+  aws_iam_role.zmg_ecs_role
+]
+}
+
+data "aws_iam_role" "ecs_task_execution_role" {
+  name = "ecsTaskExecutionRole"
+}
+
 #Create ECS with dependencies
 resource "aws_ecs_task_definition" "zmg_ecs_tasks" {
-  family = "service"
+  family = "zmg-definition-tasks"
+  requires_compatibilities = [ "FARGATE" ]
+  cpu = "256"
+  memory = "512"
+  network_mode = "awsvpc"
+  task_role_arn = aws_iam_role.zmg_ecs_role.arn
+  execution_role_arn = data.aws_iam_role.ecs_task_execution_role.arn
   container_definitions = jsonencode([
     {
       name      = "first"
@@ -67,16 +275,6 @@ resource "aws_ecs_task_definition" "zmg_ecs_tasks" {
       ]
     }
   ])
-
-  volume {
-    name      = "service-storage"
-    host_path = "/ecs/service-storage"
-  }
-
-  placement_constraints {
-    type       = "memberOf"
-    expression = "attribute:ecs.availability-zone in [us-east-1a, us-east-1b]"
-  }
 }
 
 resource "aws_ecs_cluster" "zmg_ecs_cluser" {
@@ -85,15 +283,16 @@ resource "aws_ecs_cluster" "zmg_ecs_cluser" {
 }
 
 resource "aws_ecs_service" "zmg_ecs_service" {
-  name            = "zmg_ecs"
+  name            = "zmg_ecs_service"
   cluster         = aws_ecs_cluster.zmg_ecs_cluser.id
   task_definition = aws_ecs_task_definition.zmg_ecs_tasks.arn
   desired_count   = 1
+  launch_type = "FARGATE"
 
-  ordered_placement_strategy {
-    type  = "binpack"
-    field = "cpu"
-  }
+  network_configuration {
+    subnets = [ aws_subnet.ecs_subnet_main.id ]
+    assign_public_ip = true
+  } 
 }
 
 #Create Iam Role for Build Project 001
@@ -160,6 +359,9 @@ resource "aws_iam_role_policy" "zmg_ecr_role_policy" {
   ]
 }
 POLICY
+depends_on = [
+  aws_iam_role.codebuildiamrole
+]
 }
 
 #Create Code Build
@@ -489,7 +691,7 @@ resource "aws_codepipeline" "codepipeline" {
 
       configuration = {
         ClusterName = "zmg_ecs_cluser"
-        ServiceName = "zmg_ecs"
+        ServiceName = "zmg_ecs_service"
       }
     }
   }
