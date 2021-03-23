@@ -419,12 +419,6 @@ resource "aws_codebuild_project" "zmgbuildproject" {
   }
 }
 
-#Create Code Deploy
-resource "aws_codedeploy_app" "zmgcodedeploy" {
-  compute_platform = "ECS"
-  name             = "zmg-code-deploy"
-}
-
 #Create Code Pipeline Policies
 resource "aws_iam_role" "codepipeline_role" {
   name = "code-pipeline-role"
