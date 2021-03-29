@@ -38,7 +38,14 @@ terraform init
 terraform plan -out zmgtest
 terraform apply zmgtest
 ```
+If everything goes well you will see the message:
+![image](https://user-images.githubusercontent.com/17936430/112877352-46a56e00-908c-11eb-9678-7e0af46b0df5.png)
 
+For codebuild and codepipeline services you must active the github repo connection before to
+run the pipeline
+![image](https://user-images.githubusercontent.com/17936430/112877407-5624b700-908c-11eb-90e7-10bb78c5f90a.png)
+
+Go to the URL http://awsecspublicip/WeatherForecast
 
 
 
