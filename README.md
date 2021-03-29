@@ -1,14 +1,14 @@
 # AWS TERRFORM TEST
 This project contains everything you need to deploy a dotnet core application on an AWS ECS with terraform, below you can find what features are deployed by terrafom file:
 Github Connection
-AWS S3
-AWS ECR
-Network for ECS use
-Roles and Policies for ECS use
-ECS and dependencies
-AWS Roles and Policies for Code Build and Code Pipeline execucion
-AWS Code Build Project
-AWS Code Pipeline Project
+1) AWS S3
+2) AWS ECR
+3) Network for ECS use
+4) Roles and Policies for ECS use
+5) ECS and dependencies
+6) AWS Roles and Policies for Code Build and Code Pipeline execucion
+7) AWS Code Build Project
+8) AWS Code Pipeline Project
 
 ## Pre-requisites
 1) If you want run the project locally you must have installed [Docker](https://docs.docker.com/get-docker/) and [Terraform](https://chocolatey.org/packages/terraform) in your local PC.
